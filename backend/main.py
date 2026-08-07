@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from backend import config, cost_tracker, orchestrator, pdf_export, storage
+from backend import archive, config, cost_tracker, orchestrator, pdf_export, storage
 from backend.rag import chroma_store
 from backend.schemas import CreateProgrammeRequest, ProgrammeState, RejectRequest
 
@@ -29,6 +29,13 @@ async def lifespan(_: FastAPI):
     config.ensure_dirs()
     if config.missing_api_key():
         log.warning("MISTRAL_API_KEY is not set — agent calls will fail.")
+
+    try:
+        archive.init()
+        log.info("archive ready: %s approved programme(s)", archive.count())
+    except Exception:
+        # Approval will return 503 rather than pretend a programme was archived.
+        log.exception("archive unavailable — approvals will be refused until the DB is reachable")
 
     # Hosts with an ephemeral filesystem discard the persisted Chroma store on every
     # restart, which would leave every agent running without retrieval. Rebuild it here
@@ -77,6 +84,11 @@ def health() -> dict:
             "collection": config.COLLECTION_NAME,
             "chunks": chroma_store.count(),
             "path": str(config.CHROMA_PERSIST_DIR),
+        },
+        "archive": {
+            # -1 means the database is unreachable; approvals will be refused.
+            "approved_programmes": archive.count(),
+            "backend": config.DATABASE_URL.split("://", 1)[0],
         },
         "max_revisions": config.MAX_REVISIONS,
         "max_human_rejections": config.MAX_HUMAN_REJECTIONS,
@@ -131,11 +143,7 @@ def get_cost(run_id: str) -> dict:
     return {"run_id": run_id, **cost_tracker.summarise(state.cost_log)}
 
 
-@app.get("/api/programmes/{run_id}/export/{section}.pdf")
-def export_pdf(run_id: str, section: str) -> Response:
-    """Download curriculum / content_plan / assessments as a PDF."""
-    state = _require(run_id)
-
+def _render_pdf(state: ProgrammeState, run_id: str, section: str) -> Response:
     entry = pdf_export.EXPORTS.get(section)
     if entry is None:
         raise HTTPException(
@@ -166,6 +174,12 @@ def export_pdf(run_id: str, section: str) -> Response:
     )
 
 
+@app.get("/api/programmes/{run_id}/export/{section}.pdf")
+def export_pdf(run_id: str, section: str) -> Response:
+    """Download curriculum / content_plan / assessments of a LIVE run as a PDF."""
+    return _render_pdf(_require(run_id), run_id, section)
+
+
 @app.post("/api/programmes/{run_id}/approve")
 def approve(run_id: str) -> dict:
     state = _require(run_id)
@@ -174,11 +188,28 @@ def approve(run_id: str) -> dict:
             status_code=409,
             detail=f"run is '{state.status}' — only 'awaiting_approval' can be approved",
         )
+    approved_at = storage.now_iso()
     state.status = "approved"
     state.human_decision = "approved"
     storage.record(state, "human", "approved", "Human approved the final programme.")
+
+    # Archive BEFORE persisting the decision. `state` is the live cached object, so a failed
+    # archive has to leave no trace of an approval that was never durably recorded — otherwise
+    # the UI shows "approved" for a programme that exists nowhere but this container's disk.
+    try:
+        summary = archive.save_approved(state, approved_at)
+    except Exception as exc:
+        state.status = "awaiting_approval"
+        state.human_decision = None
+        state.history.pop()
+        log.exception("archiving %s failed — approval refused", run_id)
+        raise HTTPException(
+            status_code=503,
+            detail=f"could not archive the approved programme — nothing was saved: {exc}",
+        ) from exc
+
     storage.save(state)
-    return {"run_id": run_id, "status": state.status}
+    return {"run_id": run_id, "status": state.status, "archived": summary}
 
 
 @app.post("/api/programmes/{run_id}/reject")
@@ -205,6 +236,42 @@ def reject(run_id: str, body: RejectRequest, background: BackgroundTasks) -> dic
         orchestrator.resume_after_human_rejection, state, body.feedback, body.target_agent
     )
     return {"run_id": run_id, "status": "revising", "routed_to": body.target_agent or "curriculum"}
+
+
+# ---------------------------------------------------------------- approved archive
+# Read-only history of what humans signed off. Served from the database rather than
+# `storage`, so these survive a restart that wipes every live run file.
+@app.get("/api/archive")
+def list_archive(limit: int = 25, offset: int = 0, q: str | None = None) -> dict:
+    """Newest-first page of approved programmes. `q` matches title or original request."""
+    limit = max(1, min(limit, 100))
+    try:
+        return archive.list_approved(limit=limit, offset=max(0, offset), q=q)
+    except Exception as exc:
+        log.exception("archive listing failed")
+        raise HTTPException(status_code=503, detail=f"archive unavailable: {exc}") from exc
+
+
+@app.get("/api/archive/{run_id}")
+def get_archived(run_id: str) -> dict:
+    """The full approved programme exactly as it stood when the human signed it off."""
+    try:
+        row = archive.get_approved(run_id)
+    except Exception as exc:
+        log.exception("archive lookup failed for %s", run_id)
+        raise HTTPException(status_code=503, detail=f"archive unavailable: {exc}") from exc
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"no approved programme archived for {run_id}")
+    return row
+
+
+@app.get("/api/archive/{run_id}/export/{section}.pdf")
+def export_archived_pdf(run_id: str, section: str) -> Response:
+    """Re-render a PDF from the archived snapshot — works long after the live run is gone."""
+    state = archive.get_state(run_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail=f"no approved programme archived for {run_id}")
+    return _render_pdf(state, run_id, section)
 
 
 # ---------------------------------------------------------------- frontend

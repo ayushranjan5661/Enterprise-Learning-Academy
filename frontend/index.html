@@ -12,7 +12,12 @@
       <h1>AI Learning Academy</h1>
       <p class="sub">Multi-agent programme design &middot; Mistral + ChromaDB</p>
     </div>
-    <div class="health" id="health">checking&hellip;</div>
+    <div class="topright">
+      <button id="historyBtn" class="ghost">
+        &#9776; Approved history <span class="count" id="historyCount"></span>
+      </button>
+      <div class="health" id="health">checking&hellip;</div>
+    </div>
   </header>
 
   <main>
@@ -24,6 +29,25 @@
         <button id="submit" class="primary">Run agent pipeline</button>
         <button id="useExample" class="ghost">Use example</button>
         <span class="hint" id="submitHint"></span>
+      </div>
+    </section>
+
+    <!-- ------------------------------------------------ approved archive -->
+    <section class="card hidden" id="archiveCard">
+      <div class="cardhead">
+        <h2>Approved programmes</h2>
+        <span class="badge ok" id="archiveBadge">0 approved</span>
+      </div>
+      <p class="muted small">
+        Every programme a human signed off is archived to the database. These survive
+        restarts, unlike in-progress runs.
+      </p>
+      <input id="archiveSearch" type="search" placeholder="Search by programme title or original request&hellip;" />
+      <div class="archive-list" id="archiveList"></div>
+      <div class="row hidden" id="archivePager">
+        <button id="archivePrev" class="ghost">&larr; Newer</button>
+        <span class="hint" id="archiveRange"></span>
+        <button id="archiveNext" class="ghost">Older &rarr;</button>
       </div>
     </section>
 
@@ -75,6 +99,8 @@
         <h2>Programme draft</h2>
         <span class="badge" id="verdictBadge"></span>
       </div>
+
+      <div class="archived-banner hidden" id="archivedBanner"></div>
 
       <div class="downloads" id="downloads">
         <span class="dl-label">Download PDF:</span>

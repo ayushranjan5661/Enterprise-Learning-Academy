@@ -27,6 +27,15 @@ CHROMA_PERSIST_DIR = _path("CHROMA_PERSIST_DIR", "./data/chroma_db")
 RUNS_DIR = _path("RUNS_DIR", "./data/runs")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "learning_materials")
 
+# Archive of human-approved programmes. The SQLite default is convenient locally but lives
+# on the same disposable disk as everything else — point this at Postgres on any host with
+# an ephemeral filesystem, or the archive is lost with the container.
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip() or f"sqlite:///{ROOT_DIR / 'data' / 'archive.db'}"
+# SQLAlchemy still uses the legacy `postgres://` scheme as a hard error; several hosts
+# (Render, Heroku) hand out exactly that. Normalise rather than make the user edit it.
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
 # Cap on the *automated* quality-gate loop — stops agents revising unattended forever.
 MAX_REVISIONS = int(os.getenv("MAX_REVISIONS", "3"))
 # Human rejections get their own budget: a person pressing "reject" is deliberate and

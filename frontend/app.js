@@ -13,6 +13,7 @@ const AGENTS = [
 ];
 
 const POLL_MS = 1500;
+const ARCHIVE_PAGE = 10;
 const $ = (sel) => document.querySelector(sel);
 const el = (tag, cls, html) => {
   const n = document.createElement(tag);
@@ -27,6 +28,14 @@ let runId = null;
 let timer = null;
 let lastRenderedStatus = null;
 
+/* Archive view state. `viewingArchiveId` doubles as the read-only flag: while it is set,
+   polling must not repaint the panes with the live run underneath the archived snapshot. */
+let healthInfo = {};
+let viewingArchiveId = null;
+let archiveOffset = 0;
+let archiveQuery = "";
+let archiveSearchTimer = null;
+
 /* ------------------------------------------------------------------ setup */
 document.addEventListener("DOMContentLoaded", () => {
   buildAgentList();
@@ -38,11 +47,42 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#tabs").onclick = (e) => {
     if (e.target.dataset.tab) showTab(e.target.dataset.tab);
   };
+
+  $("#historyBtn").onclick = toggleArchive;
+  $("#archiveList").onclick = (e) => {
+    const row = e.target.closest(".arow");
+    if (row) openArchived(row.dataset.run);
+  };
+  $("#archiveSearch").oninput = (e) => {
+    // Debounced: typing a title shouldn't fire a query per keystroke.
+    clearTimeout(archiveSearchTimer);
+    const value = e.target.value.trim();
+    archiveSearchTimer = setTimeout(() => {
+      archiveQuery = value;
+      archiveOffset = 0;
+      loadArchive();
+    }, 250);
+  };
+  $("#archivePrev").onclick = () => {
+    archiveOffset = Math.max(0, archiveOffset - ARCHIVE_PAGE);
+    loadArchive();
+  };
+  $("#archiveNext").onclick = () => {
+    archiveOffset += ARCHIVE_PAGE;
+    loadArchive();
+  };
 });
+
+function fmtDate(iso) {
+  const d = new Date(iso);
+  return isNaN(d) ? String(iso ?? "") : d.toLocaleString();
+}
 
 async function loadHealth() {
   try {
     const h = await (await fetch("/api/health")).json();
+    healthInfo = h;
+    setHistoryCount(h.archive?.approved_programmes);
     $("#health").innerHTML =
       `${h.api_key_configured ? "&#9679; API key loaded" : "&#9679; <b>no API key</b>"} &middot; ` +
       `${esc(h.models.large)} / ${esc(h.models.small)} &middot; ` +
@@ -57,6 +97,17 @@ async function loadHealth() {
     }
   } catch {
     $("#health").textContent = "backend unreachable";
+  }
+}
+
+/* -1 is the archive's "database unreachable" signal, not a count. */
+function setHistoryCount(n) {
+  const badge = $("#historyCount");
+  if (n === undefined || n === null || n < 0) {
+    badge.textContent = "";
+    badge.title = n < 0 ? "Archive database unreachable" : "";
+  } else {
+    badge.textContent = n;
   }
 }
 
@@ -80,12 +131,13 @@ async function submit() {
     $("#submitHint").textContent = "Describe the programme you need (10+ characters).";
     return;
   }
+  // A new run takes over the result card, so drop out of the archived snapshot first.
+  viewingArchiveId = null;
   $("#submit").disabled = true;
   $("#submitHint").textContent = "starting agents…";
   ["#progressCard", "#costCard"].forEach((s) => $(s).classList.remove("hidden"));
-  ["#resultCard", "#errorCard", "#approvedBox", "#approvalBox", "#revisionBanner"].forEach((s) =>
-    $(s).classList.add("hidden")
-  );
+  ["#resultCard", "#errorCard", "#approvedBox", "#approvalBox", "#revisionBanner",
+   "#archivedBanner"].forEach((s) => $(s).classList.add("hidden"));
   buildAgentList();
   lastRenderedStatus = null;
 
@@ -112,7 +164,7 @@ function startPolling() {
 }
 
 async function poll() {
-  if (!runId) return;
+  if (!runId || viewingArchiveId) return;
   try {
     const state = await (await fetch(`/api/programmes/${runId}`)).json();
     renderProgress(state);
@@ -273,7 +325,8 @@ function renderResult(state) {
 
 /* A section can only be exported once the agent that owns it has produced it, so each
    link is disabled until its state section exists — the endpoint 409s otherwise. */
-function renderDownloads(state) {
+function renderDownloads(state, base) {
+  const from = base || `/api/programmes/${runId}`;
   const present = {
     curriculum: !!state.curriculum,
     content_plan: !!state.content_plan,
@@ -284,7 +337,7 @@ function renderDownloads(state) {
     const ready = present[section];
     a.classList.toggle("disabled", !ready);
     if (ready) {
-      a.href = `/api/programmes/${runId}/export/${section}.pdf`;
+      a.href = `${from}/export/${section}.pdf`;
       a.title = `Download ${section.replace("_", " ")} as PDF`;
     } else {
       a.removeAttribute("href");
@@ -455,6 +508,130 @@ function paneAssessments(a, c) {
       .join("");
 }
 
+/* --------------------------------------------------------- approved archive */
+async function toggleArchive() {
+  const card = $("#archiveCard");
+  const opening = card.classList.contains("hidden");
+  card.classList.toggle("hidden", !opening);
+  $("#historyBtn").classList.toggle("active", opening);
+  if (opening) {
+    archiveOffset = 0;
+    await loadArchive();
+    card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+}
+
+async function loadArchive() {
+  const list = $("#archiveList");
+  list.innerHTML = `<p class="muted small">Loading&hellip;</p>`;
+  try {
+    const params = new URLSearchParams({ limit: ARCHIVE_PAGE, offset: archiveOffset });
+    if (archiveQuery) params.set("q", archiveQuery);
+    const res = await fetch(`/api/archive?${params}`);
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    renderArchive(await res.json());
+  } catch (e) {
+    // A dead archive DB must read as exactly that, not as "no approved programmes".
+    list.innerHTML = `<p class="muted small">Archive unavailable &mdash; ${esc(e.message || e)}</p>`;
+    $("#archivePager").classList.add("hidden");
+  }
+}
+
+function renderArchive(data) {
+  $("#archiveBadge").textContent = `${data.total} approved`;
+  if (!archiveQuery) setHistoryCount(data.total);
+
+  const list = $("#archiveList");
+  if (!data.programmes.length) {
+    list.innerHTML = archiveQuery
+      ? `<p class="muted small">Nothing matches &ldquo;${esc(archiveQuery)}&rdquo;.</p>`
+      : `<p class="muted small">No programmes approved yet. Approve one and it appears here.</p>`;
+    $("#archivePager").classList.add("hidden");
+    return;
+  }
+
+  list.innerHTML = data.programmes
+    .map(
+      (p) =>
+        `<button class="arow" data-run="${esc(p.run_id)}">` +
+        `<span class="atitle">${esc(p.programme_title)}</span>` +
+        `<span class="ameta">${esc(fmtDate(p.approved_at))} &middot; ` +
+        `${p.module_count} module(s) &middot; ${esc(p.total_duration_hours)}h &middot; ` +
+        `$${(p.cost_usd || 0).toFixed(5)}` +
+        `${p.human_revision_count ? ` &middot; ${p.human_revision_count} human revision(s)` : ""}</span>` +
+        `<span class="areq">${esc(p.manager_request)}</span>` +
+        `</button>`
+    )
+    .join("");
+
+  const first = data.offset + 1;
+  const last = Math.min(data.offset + data.programmes.length, data.total);
+  $("#archivePager").classList.toggle("hidden", data.total <= ARCHIVE_PAGE);
+  $("#archiveRange").textContent = `${first}–${last} of ${data.total}`;
+  $("#archivePrev").disabled = data.offset === 0;
+  $("#archiveNext").disabled = last >= data.total;
+}
+
+async function openArchived(id) {
+  clearInterval(timer); // the live poll must not repaint the panes underneath us
+  try {
+    const res = await fetch(`/api/archive/${id}`);
+    if (!res.ok) throw new Error((await res.json()).detail || res.statusText);
+    const row = await res.json();
+    const state = row.state || {};
+    // The archived snapshot is a raw ProgrammeState; the caps are added by the live
+    // endpoint, so borrow them from /api/health or the panes render "of undefined".
+    state.max_revisions ??= healthInfo.max_revisions;
+    state.max_human_rejections ??= healthInfo.max_human_rejections;
+    viewingArchiveId = id;
+    renderArchived(row, state);
+  } catch (e) {
+    showError(`Could not open archived programme: ${e.message || e}`);
+  }
+}
+
+function renderArchived(row, state) {
+  ["#progressCard", "#costCard", "#errorCard", "#approvalBox", "#approvedBox"].forEach((s) =>
+    $(s).classList.add("hidden")
+  );
+  $("#resultCard").classList.remove("hidden");
+
+  const vb = $("#verdictBadge");
+  vb.textContent = "archived · approved";
+  vb.className = "badge ok";
+
+  const banner = $("#archivedBanner");
+  banner.classList.remove("hidden");
+  banner.innerHTML =
+    `<div><b>Archived snapshot</b> &mdash; approved ${esc(fmtDate(row.approved_at))} &middot; ` +
+    `run <code>${esc(row.run_id)}</code>. Read-only; this is exactly what the human signed off.</div>` +
+    `<button class="ghost" id="exitArchive">Close</button>`;
+  $("#exitArchive").onclick = exitArchive;
+
+  renderDownloads(state, `/api/archive/${row.run_id}`);
+  paneQuality(state.quality_review || {}, state);
+  paneLearners(state.learner_analysis);
+  paneCurriculum(state.curriculum);
+  paneContent(state.content_plan);
+  paneAssessments(state.assessments, state.curriculum);
+  showTab("curriculum");
+
+  $("#resultCard").scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function exitArchive() {
+  if (!viewingArchiveId) return;
+  viewingArchiveId = null;
+  $("#archivedBanner").classList.add("hidden");
+  $("#resultCard").classList.add("hidden");
+  lastRenderedStatus = null;
+  // Restore the live run if one is still loaded in this session.
+  if (runId) {
+    ["#progressCard", "#costCard"].forEach((s) => $(s).classList.remove("hidden"));
+    startPolling();
+  }
+}
+
 function showError(msg) {
   $("#errorCard").classList.remove("hidden");
   $("#errorText").textContent = msg;
@@ -468,6 +645,13 @@ async function approve() {
     if (!res.ok) throw new Error((await res.json()).detail);
     lastRenderedStatus = null;
     await poll();
+    // It is now in the archive — reflect that without needing a page reload.
+    if (!$("#archiveCard").classList.contains("hidden")) {
+      archiveOffset = 0;
+      await loadArchive();
+    } else {
+      loadHealth();
+    }
   } catch (e) {
     showError(String(e.message || e));
   } finally {
