@@ -12,10 +12,10 @@ from contextlib import asynccontextmanager
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from backend import config, cost_tracker, orchestrator, storage
+from backend import config, cost_tracker, orchestrator, pdf_export, storage
 from backend.rag import chroma_store
 from backend.schemas import CreateProgrammeRequest, ProgrammeState, RejectRequest
 
@@ -129,6 +129,41 @@ def get_history(run_id: str) -> dict:
 def get_cost(run_id: str) -> dict:
     state = _require(run_id)
     return {"run_id": run_id, **cost_tracker.summarise(state.cost_log)}
+
+
+@app.get("/api/programmes/{run_id}/export/{section}.pdf")
+def export_pdf(run_id: str, section: str) -> Response:
+    """Download curriculum / content_plan / assessments as a PDF."""
+    state = _require(run_id)
+
+    entry = pdf_export.EXPORTS.get(section)
+    if entry is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"unknown section '{section}' — expected one of {sorted(pdf_export.EXPORTS)}",
+        )
+    attr, build = entry
+    if not getattr(state, attr, None):
+        raise HTTPException(
+            status_code=409,
+            detail=f"run has no {section} yet (status '{state.status}') — nothing to export",
+        )
+
+    try:
+        pdf = build(state)
+    except Exception as exc:  # a render failure must not read as a missing run
+        log.exception("PDF render failed for %s/%s", run_id, section)
+        raise HTTPException(status_code=500, detail=f"PDF generation failed: {exc}") from exc
+
+    filename = f"{section}_{run_id}.pdf"
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Length": str(len(pdf)),
+        },
+    )
 
 
 @app.post("/api/programmes/{run_id}/approve")

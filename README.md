@@ -131,6 +131,7 @@ fires instead of always finding a match.
 | GET | `/api/programmes/{run_id}` | Poll status, agent states, outputs, running cost |
 | GET | `/api/programmes/{run_id}/history` | Full agent-by-agent trace |
 | GET | `/api/programmes/{run_id}/cost` | Cost by agent, by model, by revision |
+| GET | `/api/programmes/{run_id}/export/{section}.pdf` | Download `curriculum`, `content_plan` or `assessments` as PDF |
 | POST | `/api/programmes/{run_id}/approve` | Human sign-off → `approved` |
 | POST | `/api/programmes/{run_id}/reject` | Human rejection + feedback → re-enters the revision loop |
 
@@ -155,6 +156,22 @@ partially-completed revision from leaving `assessments` referencing a module a l
 curriculum re-run deleted. [check_integrity()](backend/orchestrator.py) verifies the
 sections describe the same curriculum before the human approval gate opens, and fails the
 run rather than presenting an inconsistent draft for sign-off.
+
+## PDF export
+
+[pdf_export.py](backend/pdf_export.py) renders the curriculum, content plan and assessments
+to A4 PDFs with ReportLab (pure Python — no system dependencies). The UI exposes them as
+three download links on the result card; each is disabled until the owning agent has
+produced its section, and the endpoint returns 409 rather than an empty document.
+
+Every page carries the footer *"AI-generated draft - requires human review before use"*,
+and the header stamps the run id, status, revision count and generation time — so an
+exported document can always be traced back to the run that produced it.
+
+ReportLab's built-in fonts are Latin-1 only while agent output routinely contains arrows,
+em-dashes and curly quotes, so `_clean()` maps the characters that actually occur and
+replaces anything else unmappable. That avoids both black boxes and a mid-render crash
+without shipping a TTF.
 
 ## Failure recovery
 

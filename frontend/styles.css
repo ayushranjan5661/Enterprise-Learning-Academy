@@ -130,6 +130,24 @@ summary { cursor: pointer; color: var(--muted); font-size: 13px; }
 .tbl tfoot td { font-weight: 700; }
 .total { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--accent); }
 
+/* ----------------------------------------------------------- downloads */
+.downloads {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 10px 12px; margin-bottom: 14px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel2);
+}
+.dl-label { font-size: 12px; color: var(--muted); margin-right: 2px; }
+.downloads .dl {
+  font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--text);
+  text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+}
+.downloads .dl::before { content: "\2193"; color: var(--accent); font-weight: 700; }
+.downloads .dl:hover { border-color: var(--accent); }
+.downloads .dl.disabled {
+  opacity: .4; pointer-events: none;
+}
+
 /* ---------------------------------------------------------------- tabs */
 .tabs { display: flex; gap: 6px; flex-wrap: wrap; border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 14px; }
 .tabs button { padding: 6px 12px; font-size: 13px; }

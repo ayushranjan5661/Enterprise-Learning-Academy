@@ -253,6 +253,7 @@ function renderResult(state) {
   vb.textContent = q.verdict ? `quality: ${q.verdict}` : state.status.replace(/_/g, " ");
   vb.className = "badge " + (q.verdict === "approved" ? "ok" : "bad");
 
+  renderDownloads(state);
   paneQuality(q, state);
   paneLearners(state.learner_analysis);
   paneCurriculum(state.curriculum);
@@ -268,6 +269,28 @@ function renderResult(state) {
   $("#reject").disabled = rejectsLeft <= 0;
   $("#reject").title =
     rejectsLeft <= 0 ? "Human rejection cap reached — needs manual redesign" : "";
+}
+
+/* A section can only be exported once the agent that owns it has produced it, so each
+   link is disabled until its state section exists — the endpoint 409s otherwise. */
+function renderDownloads(state) {
+  const present = {
+    curriculum: !!state.curriculum,
+    content_plan: !!state.content_plan,
+    assessments: !!state.assessments,
+  };
+  document.querySelectorAll("#downloads .dl").forEach((a) => {
+    const section = a.dataset.section;
+    const ready = present[section];
+    a.classList.toggle("disabled", !ready);
+    if (ready) {
+      a.href = `/api/programmes/${runId}/export/${section}.pdf`;
+      a.title = `Download ${section.replace("_", " ")} as PDF`;
+    } else {
+      a.removeAttribute("href");
+      a.title = "Not produced by this run";
+    }
+  });
 }
 
 function pane(name) {

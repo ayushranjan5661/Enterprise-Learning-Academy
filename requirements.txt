@@ -4,3 +4,4 @@ pydantic>=2.9.0
 python-dotenv>=1.0.1
 mistralai>=1.2.0
 chromadb>=0.5.20
+reportlab>=4.0.0
