@@ -29,6 +29,19 @@ async def lifespan(_: FastAPI):
     config.ensure_dirs()
     if config.missing_api_key():
         log.warning("MISTRAL_API_KEY is not set — agent calls will fail.")
+
+    # Hosts with an ephemeral filesystem discard the persisted Chroma store on every
+    # restart, which would leave every agent running without retrieval. Rebuild it here
+    # rather than failing silently. Never fatal: a degraded RAG beats a dead service.
+    if config.SEED_ON_BOOT and not config.missing_api_key() and chroma_store.count() == 0:
+        log.info("vector store empty and SEED_ON_BOOT set — seeding sample materials...")
+        try:
+            from backend.rag import seed_content
+
+            seed_content.main()
+        except Exception:
+            log.exception("boot seed failed — continuing with an empty vector store")
+
     log.info("vector store: %s chunk(s) at %s", chroma_store.count(), config.CHROMA_PERSIST_DIR)
     yield
 

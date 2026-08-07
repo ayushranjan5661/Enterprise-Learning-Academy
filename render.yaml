@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: enterprise-learning-academy
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    # ONE worker only. Run state lives in an in-process dict (backend/storage.py) and the
+    # pipeline runs via FastAPI BackgroundTasks in the same process — a second worker
+    # would serve stale snapshots of runs it did not start.
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT --workers 1
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Set in the Render dashboard, never committed.
+      - key: MISTRAL_API_KEY
+        sync: false
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      # The free tier has no persistent disk: the Chroma store is discarded on every
+      # deploy and restart, so it has to be rebuilt at startup.
+      - key: SEED_ON_BOOT
+        value: "true"

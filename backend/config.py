@@ -47,6 +47,11 @@ LLM_RATE_LIMIT_MAX_BACKOFF_SECONDS = float(os.getenv("LLM_RATE_LIMIT_MAX_BACKOFF
 
 FRONTEND_DIR = ROOT_DIR / "frontend"
 
+# Re-embed sample_materials/ at startup when the collection is empty. Required on hosts
+# with an ephemeral filesystem (e.g. Render's free tier), where the persisted Chroma
+# store is discarded on every deploy and restart.
+SEED_ON_BOOT = os.getenv("SEED_ON_BOOT", "false").strip().lower() in {"1", "true", "yes"}
+
 
 def ensure_dirs() -> None:
     CHROMA_PERSIST_DIR.mkdir(parents=True, exist_ok=True)
