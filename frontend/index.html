@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Learning Academy — Multi-Agent System</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>AI Learning Academy</h1>
+      <p class="sub">Multi-agent programme design &middot; Mistral + ChromaDB</p>
+    </div>
+    <div class="health" id="health">checking&hellip;</div>
+  </header>
+
+  <main>
+    <!-- ---------------------------------------------------------- request -->
+    <section class="card" id="requestCard">
+      <h2>Manager request</h2>
+      <textarea id="request" rows="4" placeholder="e.g. Create an AI upskilling programme for 1,000 software engineers across India, covering GenAI, RAG, AI agents and responsible AI."></textarea>
+      <div class="row">
+        <button id="submit" class="primary">Run agent pipeline</button>
+        <button id="useExample" class="ghost">Use example</button>
+        <span class="hint" id="submitHint"></span>
+      </div>
+    </section>
+
+    <!-- --------------------------------------------------------- progress -->
+    <section class="card hidden" id="progressCard">
+      <div class="cardhead">
+        <h2>Pipeline</h2>
+        <span class="badge" id="statusBadge">running</span>
+      </div>
+
+      <ol class="agents" id="agentList"></ol>
+
+      <div class="revision hidden" id="revisionBanner"></div>
+
+      <details id="traceBox">
+        <summary>Agent trace <span class="muted" id="traceCount"></span></summary>
+        <ul class="trace" id="trace"></ul>
+      </details>
+    </section>
+
+    <!-- ------------------------------------------------------------- cost -->
+    <section class="card hidden" id="costCard">
+      <div class="cardhead">
+        <h2>Cost &amp; tokens</h2>
+        <span class="total" id="costTotal">$0.00000</span>
+      </div>
+      <table class="tbl" id="costTable">
+        <thead>
+          <tr><th>Agent</th><th>Model</th><th>Calls</th><th>Prompt</th><th>Completion</th><th>Cost (USD)</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+      <table class="tbl slim hidden" id="revTable">
+        <thead><tr><th>Revision</th><th>Calls</th><th>Tokens</th><th>Cost (USD)</th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <p class="muted small">Costs are estimates from a local price table — verify against Mistral's pricing page.</p>
+    </section>
+
+    <!-- ------------------------------------------------------------ error -->
+    <section class="card err hidden" id="errorCard">
+      <h2>Run failed</h2>
+      <p id="errorText"></p>
+    </section>
+
+    <!-- ------------------------------------------------------------ result -->
+    <section class="card hidden" id="resultCard">
+      <div class="cardhead">
+        <h2>Programme draft</h2>
+        <span class="badge" id="verdictBadge"></span>
+      </div>
+
+      <nav class="tabs" id="tabs">
+        <button data-tab="quality" class="active">Quality review</button>
+        <button data-tab="learners">Learners</button>
+        <button data-tab="curriculum">Curriculum</button>
+        <button data-tab="content">Content plan</button>
+        <button data-tab="assessments">Assessments</button>
+      </nav>
+
+      <div class="tabpanes">
+        <div class="pane" data-pane="quality"></div>
+        <div class="pane hidden" data-pane="learners"></div>
+        <div class="pane hidden" data-pane="curriculum"></div>
+        <div class="pane hidden" data-pane="content"></div>
+        <div class="pane hidden" data-pane="assessments"></div>
+      </div>
+
+      <div class="approval hidden" id="approvalBox">
+        <h3>Human approval gate</h3>
+        <p class="muted small">The Quality Agent approved this draft. Nothing is final until a human signs off.</p>
+        <textarea id="rejectFeedback" rows="2" placeholder="If rejecting: what must change?"></textarea>
+        <div class="row">
+          <label class="inline">Send back to
+            <select id="rejectTarget">
+              <option value="curriculum">Curriculum Agent</option>
+              <option value="content">Content Agent</option>
+              <option value="assessment">Assessment Agent</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <button id="approve" class="primary">Approve programme</button>
+          <button id="reject" class="danger">Reject &amp; revise</button>
+        </div>
+      </div>
+
+      <div class="approved hidden" id="approvedBox">
+        Approved by human &mdash; programme is final.
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
